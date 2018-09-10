@@ -1,0 +1,614 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Cats-Effect</title>
+    <meta charset="utf-8">
+    <style>
+      @import url(https://fonts.googleapis.com/css?family=Yanone+Kaffeesatz);
+      @import url(https://fonts.googleapis.com/css?family=Droid+Serif:400,700,400italic);
+      @import url(https://fonts.googleapis.com/css?family=Ubuntu+Mono:400,700,400italic);
+
+      body { font-family: 'Droid Serif', 'Helvetica'; }
+      h1, h2, h3 {
+        font-family: 'Yanone Kaffeesatz', 'Gill Sans';
+        font-weight: normal;
+      }
+      .remark-code, .remark-inline-code { font-family: 'Ubuntu Mono', 'Consolas', 'Courier New'; }
+    </style>
+  </head>
+  <body>
+    <textarea id="source">
+
+
+
+
+class: center, middle
+
+# Cats-Effect
+
+Indy Scala
+
+September 10, 2018
+
+Ross A. Baker • `@rossabaker`
+
+???
+- notes here
+- see https://remarkjs.com/#1
+
+
+
+
+---
+
+# Referential transparency
+
+```scala
+scala> def f(x: Int) = x * x
+f: (x: Int)Int
+
+scala> val program1 = f(5) + f(5)
+program1: Int = 50
+```
+
+--
+
+`f(5)` is a _referentially transparent_ expression because we can
+substitute its value for the expression without changing the program:
+
+```scala
+scala> val a = f(5)
+a: Int = 25
+
+scala> val program2 = a + a
+program2: Int = 50
+```
+
+---
+
+# Referential opacity
+
+
+```scala
+scala> var global = 0
+global: Int = 0
+
+scala> def g(x: Int) = { global += 1; x * global }
+g: (x: Int)Int
+
+scala> val program1 = g(5) + g(5)
+program1: Int = 15
+```
+
+--
+
+`f(5)` is a _referentially opaque_ expression because substituting
+the expression with its value might alter the program:
+
+```scala
+scala> val a = g(5)
+a: Int = 15
+
+scala> val program2 = a + a
+program2: Int = 30
+```
+
+---
+
+# Some benefits of referential transparency
+
+- Safe refactoring of common expressions
+
+--
+
+- Safe caching of expensive expressions
+
+--
+
+- Safe parallelization of independent expressions
+
+--
+
+- Safe lazy evaluation of unneeded expressions
+
+--
+
+- Locality of reason
+
+---
+
+# Referential opacity can be subtle
+
+```scala
+import java.util.UUID.randomUUID
+```
+
+```scala
+scala> val a = randomUUID
+a: java.util.UUID = 7265e65e-b53a-4496-b998-10acd63aedb8
+
+scala> val prg1 = randomUUID === randomUUID
+prg1: Boolean = false
+
+scala> val prg2 = a === a
+prg2: Boolean = true
+```
+
+---
+
+# I/O is not referentially transparent
+
+```scala
+scala> val a = println("Hello, Indy")
+Hello, Indy
+a: Unit = ()
+
+scala> val prg1 = for (i <- 1 to 2) println("Hello, Indy")
+Hello, Indy
+Hello, Indy
+prg1: Unit = ()
+
+scala> val prg2 = for (i <- 1 to 2) a
+prg2: Unit = ()
+```
+
+--
+
+Every useful program performs I/O.
+
+--
+
+Unless your use case is to heat the room.
+
+---
+
+# A side effect is like human waste
+
+--
+
+- We all produce it.
+
+--
+
+- Your life would be worse if you didn't.
+
+--
+
+- But civilization depends on us all doing it in the right place.
+
+---
+
+# `IO` is your program's sanitation system
+
+```scala
+import cats.effect._
+import cats.implicits._
+```
+
+`IO` lets us turn a side effect into a value.
+
+```scala
+scala> val a = IO(println("Hello, Indy"))
+a: cats.effect.IO[Unit] = IO$1664540262
+```
+
+--
+
+And then we can relieve ourselves at the appropriate place and time:
+
+```scala
+scala> a.unsafeRunSync()
+Hello, Indy
+```
+
+---
+
+# `IO` makes your I/O referentially transparent
+
+```scala
+scala> val a = IO(println("Hello, Indy"))
+a: cats.effect.IO[Unit] = IO$175907304
+
+scala> val prg1 = IO(println("Hello, Indy")) *> IO(println("Hello, Indy"))
+prg1: cats.effect.IO[Unit] = <function1>
+
+scala> val prg2 = a *> a
+prg2: cats.effect.IO[Unit] = <function1>
+
+scala> prg1.unsafeRunSync()
+Hello, Indy
+Hello, Indy
+
+scala> prg2.unsafeRunSync()
+Hello, Indy
+Hello, Indy
+```
+
+---
+
+# Referential transparency is not idempotence
+
+```scala
+import java.util.concurrent.atomic.AtomicInteger
+```
+
+```scala
+scala> val state = new AtomicInteger(0)
+state: java.util.concurrent.atomic.AtomicInteger = 0
+
+scala> val prog1 = IO(state.incrementAndGet())
+prog1: cats.effect.IO[Int] = IO$219710819
+```
+
+```scala
+scala> prog1.unsafeRunSync()
+res3: Int = 1
+
+scala> prog1.unsafeRunSync()
+res4: Int = 2
+```
+
+---
+
+# It's substitutability
+
+```scala
+scala> val prog2 = prog1 *> prog1
+prog2: cats.effect.IO[Int] = <function1>
+
+scala> val prog3 = IO(state.incrementAndGet()) *> IO(state.incrementAndGet())
+prog3: cats.effect.IO[Int] = <function1>
+
+scala> prog2.unsafeRunSync()
+res5: Int = 4
+
+scala> prog3.unsafeRunSync()
+res6: Int = 6
+```
+
+--
+
+* `prog1` is referentially transparent
+
+--
+
+* `prog1.unsafeRunSync()` is not
+
+--
+
+* `IO`'s buys you referential transparency through _laziness_
+
+---
+
+# Asynchronicity
+
+Deep Thought takes several million years to run, and that's a long
+time to block a thread, so it gives us a callback interface.
+
+```scala
+def deepThought(cb: Either[Throwable, Int] => Unit): Unit = {
+  println("Several million years pass...")
+  cb(Right(42))
+}
+```
+
+--
+
+That's good for scalability, but calling it is a side effect.
+
+```scala
+scala> deepThought {
+     |   case Right(answer) =>
+     |     println(answer)
+     |   case Left(t) =>
+     |     println("Don't panic")
+     | }
+Several million years pass...
+42
+```
+
+---
+
+# `Future` is an asynchronous value
+
+```scala
+import scala.concurrent._
+import scala.concurrent.ExecutionContext.Implicits.global
+```
+
+```scala
+scala> def f = {
+     |   val p = Promise[Int]
+     |   deepThought {
+     |     case Right(answer) => p.success(answer)
+     |     case Left(t) => p.failure(t)
+     |   }
+     |   p.future
+     | }
+f: scala.concurrent.Future[Int]
+```
+
+---
+
+# But `Future` is referentially opaque
+
+
+
+
+```scala
+scala> val prg1 = (f, f).mapN(_ + _)
+Several million years pass...
+Several million years pass...
+prg1: scala.concurrent.Future[Int] = Future(Success(84))
+
+scala> val prg2 = {
+     |   val g = f
+     |   (g, g).mapN(_ + _)
+     | }
+Several million years pass...
+prg2: scala.concurrent.Future[Int] = Future(<not completed>)
+```
+
+---
+
+# `IO` is async _and_ transparent
+
+```scala
+scala> def f = IO.async(cb => deepThought(cb))
+f: cats.effect.IO[Int]
+
+scala> val prg1 = (f, f).mapN(_ + _)
+prg1: cats.effect.IO[Int] = <function1>
+
+scala> val prg2 = {
+     |   val g = f
+     |   (g, g).mapN(_ + _)
+     | }
+prg2: cats.effect.IO[Int] = <function1>
+
+scala> prg1.unsafeRunSync()
+Several million years pass...
+Several million years pass...
+res8: Int = 84
+
+scala> prg2.unsafeRunSync()
+Several million years pass...
+Several million years pass...
+res9: Int = 84
+```
+
+--
+
+Key point: `prg2` behaves the same whether `f` is a def or a val.
+
+---
+
+
+
+
+# Typeclass review: `cats.Functor`
+
+```scala
+def f(a: Int) = 6 * 7
+```
+
+```scala
+scala> Option(21).map(f)
+res10: Option[Int] = Some(42)
+
+scala> IO(21).map(f).unsafeRunSync()
+res11: Int = 42
+```
+
+---
+
+# Typeclass review: `cats.Apply`
+`extends Functor[F[_]]`
+
+```scala
+def f(a: Int, b: Int) = a * b
+```
+
+```scala
+scala> (Option(6), Option(7)).mapN(f)
+res12: Option[Int] = Some(42)
+
+scala> (IO(6), IO(7)).mapN(f).unsafeRunSync()
+res13: Int = 42
+```
+
+---
+
+# Typeclass review: `cats.Applicative`
+`extends Apply[F[_]]`
+
+```scala
+scala> 42.pure[Option]
+res14: Option[Int] = Some(42)
+
+scala> 42.pure[IO].unsafeRunSync()
+res15: Int = 42
+```
+
+---
+
+# Typeclass review: `cats.Monad`
+`extends Applicative[F[_]]`
+
+```scala
+scala> Option(Option(42)).flatten
+res16: Option[Int] = Some(42)
+
+scala> IO(IO(42)).flatten.unsafeRunSync()
+res17: Int = 42
+```
+
+---
+
+# Typeclass review: `cats.MonadError`
+`extends Monad[F[_]]`
+
+`Option` gets off the bus here.
+
+```scala
+case object SadTrombone extends Exception
+```
+
+```scala
+scala> MonadError[Either[Throwable, ?], Throwable].raiseError[Int](SadTrombone)
+res18: scala.util.Either[Throwable,Int] = Left(SadTrombone$)
+
+scala> MonadError[IO, Throwable].raiseError[Int](SadTrombone)
+res19: cats.effect.IO[Int] = IO(throw SadTrombone$)
+```
+
+---
+
+# New typeclass: `cats.effect.Bracket`
+`extends MonadError[F[_], E]`
+
+`Either` and `Future` get off the bus here.
+
+```scala
+scala> IO(println("acquire")).bracket(
+     |     resource => IO.raiseError(SadTrombone))(
+     |     resource => IO(println("release"))).attempt.unsafeRunSync()
+acquire
+release
+res20: Either[Throwable,Nothing] = Left(SadTrombone$)
+```
+
+--
+
+Takeaway: gives you resource safety
+
+---
+
+# New typeclass: `cats.effect.Sync`
+`extends Bracket[Throwable, E]`
+
+```scala
+scala> Sync[IO].delay(42).attempt.unsafeRunSync()
+res21: Either[Throwable,Int] = Right(42)
+
+scala> Sync[IO].delay(throw SadTrombone).attempt.unsafeRunSync()
+res22: Either[Throwable,Nothing] = Left(SadTrombone$)
+```
+
+--
+
+Takeaway: suspends side effects into values
+
+---
+
+# New typeclass: `cats.effect.Async`
+`extends Sync[F[_]]`
+
+```scala
+scala> Async[IO].async(deepThought).attempt.unsafeRunSync()
+Several million years pass...
+res23: Either[Throwable,Int] = Right(42)
+```
+
+---
+
+# New typeclass: `cats.effect.Concurrent`
+`extends Async[F[_]]`
+
+```scala
+scala> implicit val cs: ContextShift[IO] = IO.contextShift(global)
+cs: cats.effect.ContextShift[cats.effect.IO] = cats.effect.internals.IOContextShift@33927730
+
+scala> implicit val timer: Timer[IO] = IO.timer(global)
+timer: cats.effect.Timer[cats.effect.IO] = cats.effect.internals.IOTimer@5a11a29b
+
+scala> val ultimateAnswer = IO.cancelable[Int] { cb =>
+     |   /* this computation will never complete */
+     |   IO(println("canceled"))
+     | }
+ultimateAnswer: cats.effect.IO[Int] = IO$233850185
+
+scala> ultimateAnswer.timeoutTo(1.second,
+     |   IO.raiseError(SadTrombone)).attempt.unsafeRunSync()
+res24: Either[Throwable,Int] = Left(SadTrombone$)
+```
+
+[ed. note: console shows "canceled", but tut didn't capture it]
+
+---
+
+# New typeclass: `cats.effect.Effect`
+`extends Async[F[_]]`
+
+```scala
+scala> val io = ultimateAnswer.timeoutTo(1.second,
+     |     IO.raiseError(SadTrombone)).attempt.runAsync {
+     |   case Right(answer) => IO(println(answer))
+     |   case Left(t) => IO(t.printStackTrace())
+     | }
+io: cats.effect.SyncIO[Unit] = SyncIO$987673462
+```
+
+--
+
+`unsafeRunSync()` blocks, which is dangerous in a single-threaded
+environment.  `runAsync()` produces a `SyncIO`, which is guaranteed to
+produce a value even in Scala.JS:
+
+```scala
+scala> io.unsafeRunSync()
+```
+
+// prints `Left(SadTrombone)`
+
+---
+
+# More typeclasses
+
+[Courtesy of Rob Norris](https://github.com/tpolecat/cats-infographic)
+<center><image src="https://camo.githubusercontent.com/e29cc3587dd331d1af177c8ed163de3b15ea04f2/68747470733a2f2f63646e2e7261776769742e636f6d2f74706f6c656361742f636174732d696e666f677261706869632f6d61737465722f636174732e7376673f783d31" width="560" /></center>
+
+---
+
+# Monix
+
+These typeclasses are intended to have multiple implementations.
+
+--
+
+* Everything we just did with `IO`, we can do with `monix.eval.Task`.
+
+--
+
+* Everything we did through `Sync`, we can do with `monix.eval.Coeval`.
+
+--
+
+* Libraries like fs2, doobie, and http4s that have no dependency on
+  Monix can use a Monix effects just as well as `IO` because they are
+  coded to the typeclasses.
+
+--
+
+--
+
+---
+class: center, middle
+
+# Thanks!
+Code and slides at `indyscala/cats-effect` on GitHub
+
+## Questions?
+
+
+
+
+
+ </textarea>
+    <script src="remark-latest.min.js">
+    </script>
+    <script>
+      var slideshow = remark.create();
+    </script>
+  </body>
+</html>
